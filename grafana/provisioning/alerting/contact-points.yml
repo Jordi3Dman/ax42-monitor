@@ -1,0 +1,34 @@
+#
+# Grafana contact points — ntfy webhook for Android push notifications.
+#
+# The URL comes from the NTFY_WEBHOOK_URL env var (your self-hosted ntfy
+# topic URL, e.g. https://alerts.fournico.com/server-alerts).
+#
+# ntfy expects a POST body as plain text OR a JSON body with its custom
+# headers (Title, Priority, Tags). Grafana's webhook contact point sends
+# a structured JSON payload — ntfy accepts the "message" field as the
+# notification body when you use the "Click to see details" header.
+#
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: ntfy-android
+    receivers:
+      - uid: ntfy-android-webhook
+        type: webhook
+        settings:
+          url: ${NTFY_WEBHOOK_URL}
+          httpMethod: POST
+          # Grafana's default webhook format includes labels, annotations,
+          # values, and a generatorURL back to the panel. ntfy will display
+          # the entire JSON body as the notification body — if you want
+          # prettier notifications, add a Grafana message template below.
+          title: "[{{ .Status | toUpper }}] {{ .CommonAnnotations.summary }}"
+          message: |-
+            {{ range .Alerts -}}
+            {{ .Annotations.description }}
+            Value: {{ range .Values }}{{ . }} {{ end }}
+            {{ if .GeneratorURL }}→ {{ .GeneratorURL }}{{ end }}
+            {{ end }}
+        disableResolveMessage: false

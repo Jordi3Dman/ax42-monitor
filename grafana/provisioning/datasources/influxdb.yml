@@ -1,0 +1,22 @@
+#
+# Grafana datasource provisioning — auto-registers the InfluxDB connection
+# so the admin doesn't have to click through the UI on first boot.
+#
+# All env vars come from the docker-compose environment.
+#
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    isDefault: true
+    jsonData:
+      version: Flux
+      organization: ${INFLUX_ORG}
+      defaultBucket: ${INFLUX_BUCKET}
+      tlsSkipVerify: true
+    secureJsonData:
+      token: ${INFLUX_TOKEN}
+    editable: true

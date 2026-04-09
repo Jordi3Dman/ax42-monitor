@@ -1,0 +1,326 @@
+#
+# Grafana alert rules — pre-configured health thresholds for the AX42.
+#
+# All rules query InfluxDB via Flux and fire when the condition is true for
+# the configured "for" duration. Alerts are routed via the default
+# notification policy to the ntfy-android contact point.
+#
+# Data source UID: `influxdb` (matches the provisioned datasource name
+# in datasources/influxdb.yml — Grafana auto-generates the UID from it).
+#
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: server-health
+    folder: Alerts
+    interval: 1m
+    rules:
+
+      # --- CPU ---------------------------------------------------------
+      - uid: ax42-cpu-high
+        title: "AX42 — CPU usage high"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: influxdb
+            model:
+              refId: A
+              query: |
+                from(bucket: "${INFLUX_BUCKET}")
+                  |> range(start: -5m)
+                  |> filter(fn: (r) => r._measurement == "cpu" and r._field == "usage_active")
+                  |> mean()
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [85]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                  type: query
+              expression: A
+              refId: C
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        annotations:
+          summary: "AX42 CPU usage high"
+          description: "CPU active > 85% for 5m. Medusa/Meilisearch might be thrashing."
+        labels:
+          severity: critical
+          host: ax42
+
+      # --- Memory ------------------------------------------------------
+      - uid: ax42-mem-high
+        title: "AX42 — Memory usage high"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: influxdb
+            model:
+              refId: A
+              query: |
+                from(bucket: "${INFLUX_BUCKET}")
+                  |> range(start: -5m)
+                  |> filter(fn: (r) => r._measurement == "mem" and r._field == "used_percent")
+                  |> mean()
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [85]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                  type: query
+              expression: A
+              refId: C
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        annotations:
+          summary: "AX42 memory usage high"
+          description: "Memory used > 85% for 5m. Node.js OOM risk — check Medusa worker."
+        labels:
+          severity: critical
+          host: ax42
+
+      # --- Disk --------------------------------------------------------
+      - uid: ax42-disk-full
+        title: "AX42 — Disk almost full"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: influxdb
+            model:
+              refId: A
+              query: |
+                from(bucket: "${INFLUX_BUCKET}")
+                  |> range(start: -2m)
+                  |> filter(fn: (r) => r._measurement == "disk" and r._field == "used_percent")
+                  |> max()
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [90]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                  type: query
+              expression: A
+              refId: C
+        noDataState: OK
+        execErrState: OK
+        for: 1m
+        annotations:
+          summary: "AX42 disk almost full"
+          description: "A disk partition is > 90% used. Docker logs, Postgres dumps, or Coolify backups may need cleanup."
+        labels:
+          severity: critical
+          host: ax42
+
+      # --- System load vs n_cpus ---------------------------------------
+      - uid: ax42-load-high
+        title: "AX42 — Load average high"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: influxdb
+            model:
+              refId: A
+              query: |
+                from(bucket: "${INFLUX_BUCKET}")
+                  |> range(start: -10m)
+                  |> filter(fn: (r) => r._measurement == "system" and r._field == "load1")
+                  |> mean()
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                # AX42 Ryzen is typically 12-core/24-thread. If load1 > 18
+                # (1.5× cores) for 10 min, the system is stressed.
+                - evaluator:
+                    type: gt
+                    params: [18]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                  type: query
+              expression: A
+              refId: C
+        noDataState: OK
+        execErrState: OK
+        for: 10m
+        annotations:
+          summary: "AX42 load1 > 18 for 10m"
+          description: "System load exceeds 1.5× n_cpus. Something is queueing up."
+        labels:
+          severity: warning
+          host: ax42
+
+      # --- CPU temperature (Ryzen Tctl) --------------------------------
+      - uid: ax42-cpu-overheating
+        title: "AX42 — CPU overheating"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: influxdb
+            model:
+              refId: A
+              query: |
+                from(bucket: "${INFLUX_BUCKET}")
+                  |> range(start: -2m)
+                  |> filter(fn: (r) => r._measurement == "sensors" and r._field == "temp_input")
+                  |> filter(fn: (r) => r.chip =~ /k10temp|coretemp|zenpower/)
+                  |> max()
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [85]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                  type: query
+              expression: A
+              refId: C
+        noDataState: OK
+        execErrState: OK
+        for: 2m
+        annotations:
+          summary: "AX42 CPU temperature > 85°C"
+          description: "Ryzen CPU running hot. Check server room cooling or throttle Medusa workers."
+        labels:
+          severity: critical
+          host: ax42
+
+      # --- Docker containers running count -----------------------------
+      # Fires if the running container count drops significantly — usually
+      # means a Coolify service crashed.
+      - uid: ax42-docker-crash
+        title: "AX42 — Docker container count dropped"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: influxdb
+            model:
+              refId: A
+              query: |
+                from(bucket: "${INFLUX_BUCKET}")
+                  |> range(start: -2m)
+                  |> filter(fn: (r) => r._measurement == "docker" and r._field == "n_containers_running")
+                  |> last()
+          - refId: B
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            datasourceUid: influxdb
+            model:
+              refId: B
+              query: |
+                from(bucket: "${INFLUX_BUCKET}")
+                  |> range(start: -24h, stop: -30m)
+                  |> filter(fn: (r) => r._measurement == "docker" and r._field == "n_containers_running")
+                  |> max()
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: math
+              expression: "$B - $A"
+              refId: C
+          - refId: D
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [2]
+                  operator:
+                    type: and
+                  query:
+                    params: [C]
+                  reducer:
+                    type: last
+                  type: query
+              expression: C
+              refId: D
+        noDataState: OK
+        execErrState: OK
+        for: 2m
+        annotations:
+          summary: "AX42 Docker container count dropped"
+          description: "More than 2 containers have stopped running compared to the last 24h max. A Coolify service may have crashed."
+        labels:
+          severity: critical
+          host: ax42

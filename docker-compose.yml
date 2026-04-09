@@ -1,0 +1,111 @@
+#
+# Server Health Monitoring stack (Telegraf + InfluxDB + Grafana)
+# Deployed via Coolify on the AX42 Hetzner server.
+#
+# All three services live on the same Docker network. Telegraf writes host
+# metrics into InfluxDB; Grafana reads from InfluxDB and is exposed publicly
+# at metrics.fournico.com (behind Coolify's Traefik + Let's Encrypt).
+#
+# See docs/monitoring-stack.md for the full setup walkthrough.
+#
+
+services:
+  influxdb:
+    image: influxdb:2.7
+    restart: unless-stopped
+    # InfluxDB 2.x self-bootstraps from these env vars on first boot, so we
+    # don't have to manually create an admin token via the UI. See:
+    # https://docs.influxdata.com/influxdb/v2/install/use-docker-compose/
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUX_ADMIN_USERNAME:-admin}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_ADMIN_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG:-fournico}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET:-server_health}
+      DOCKER_INFLUXDB_INIT_RETENTION: ${INFLUX_RETENTION:-60d}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+    volumes:
+      # Persistent data — survives Coolify service restarts
+      - /data/monitoring/influxdb:/var/lib/influxdb2
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  telegraf:
+    image: telegraf:1.30
+    restart: unless-stopped
+    user: telegraf:${DOCKER_GID:-999}
+    # Telegraf uses the same admin token as InfluxDB so there's no separate
+    # token management step. Good enough for a single-host setup.
+    environment:
+      INFLUX_URL: http://influxdb:8086
+      INFLUX_TOKEN: ${INFLUX_TOKEN}
+      INFLUX_ORG: ${INFLUX_ORG:-fournico}
+      INFLUX_BUCKET: ${INFLUX_BUCKET:-server_health}
+      HOST_PROC: /host/proc
+      HOST_SYS: /host/sys
+      HOST_ETC: /host/etc
+      HOST_MOUNT_PREFIX: /rootfs
+    volumes:
+      # Telegraf config
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      # Host metrics (read-only)
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /etc:/host/etc:ro
+      - /:/rootfs:ro
+      # Docker metrics — Telegraf needs to read the Docker socket to list
+      # running containers and their CPU/memory stats
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    networks:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:10.4.7
+    restart: unless-stopped
+    # Grafana auto-provisions the InfluxDB datasource, dashboards, contact
+    # point and alert rules from the mounted config folders below. All
+    # environment-specific values (admin password, ntfy URL, Influx token)
+    # are injected via env vars.
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
+      GF_SERVER_DOMAIN: ${GF_SERVER_DOMAIN:-metrics.fournico.com}
+      GF_SERVER_ROOT_URL: ${GF_SERVER_ROOT_URL:-https://metrics.fournico.com}
+      # Iframe embedding in Stitchflow — required for the Server > Health page
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_COOKIE_SAMESITE: "lax"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # Disable Grafana's own telemetry — we don't need it phoning home
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      # Injected into provisioned datasource / alerting / rules
+      INFLUX_TOKEN: ${INFLUX_TOKEN}
+      INFLUX_ORG: ${INFLUX_ORG:-fournico}
+      INFLUX_BUCKET: ${INFLUX_BUCKET:-server_health}
+      NTFY_WEBHOOK_URL: ${NTFY_WEBHOOK_URL}
+    volumes:
+      - /data/monitoring/grafana:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    networks:
+      - monitoring
+    # Coolify attaches its Traefik ingress here — expose port 3000 internally
+    expose:
+      - "3000"
+
+networks:
+  monitoring:
+    driver: bridge

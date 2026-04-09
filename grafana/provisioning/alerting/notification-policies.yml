@@ -1,0 +1,16 @@
+#
+# Grafana notification policy — route ALL alerts to the ntfy-android
+# contact point. Critical alerts are grouped by host so we don't get
+# a flood of notifications for one server issue.
+#
+apiVersion: 1
+
+policies:
+  - orgId: 1
+    receiver: ntfy-android
+    group_by:
+      - host
+      - alertname
+    group_wait: 10s
+    group_interval: 1m
+    repeat_interval: 4h
