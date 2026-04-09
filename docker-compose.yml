@@ -56,11 +56,14 @@ services:
       HOST_ETC: /host/etc
       HOST_MOUNT_PREFIX: /rootfs
     volumes:
-      # Telegraf config — mount the whole directory (not the single file)
-      # so Coolify's deploy flow doesn't accidentally auto-create a
-      # directory at the file path. Telegraf reads /etc/telegraf/telegraf.conf
-      # by default, which now comes from the host's telegraf/telegraf.conf.
-      - ./telegraf:/etc/telegraf:ro
+      # Telegraf config — mount from the manually-cloned repo on the host.
+      # Coolify's Docker Compose deploy type does NOT clone the full repo
+      # (it only fetches the compose file), so relative "./" paths don't
+      # work. The user must SSH into the AX42 and:
+      #   sudo git clone https://github.com/Jordi3Dman/ax42-monitor.git \
+      #     /data/monitoring/config
+      # then `git pull` whenever config changes. See README.md.
+      - /data/monitoring/config/telegraf:/etc/telegraf:ro
       # Host metrics (read-only)
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -102,8 +105,10 @@ services:
       NTFY_WEBHOOK_URL: ${NTFY_WEBHOOK_URL}
     volumes:
       - /data/monitoring/grafana:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      # Grafana provisioning + dashboards — from the manually-cloned repo
+      # on the host. See the note in the telegraf service above.
+      - /data/monitoring/config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - /data/monitoring/config/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       influxdb:
         condition: service_healthy

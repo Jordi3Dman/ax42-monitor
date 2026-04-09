@@ -80,6 +80,27 @@ The Stitchflow WMS side (nav item + iframe page) lives separately in the
 - `src/components/wms/config/navigationConfig.ts` — "Health" nav entry
 - `src/App.tsx` — route
 
+## ⚠️ Important: Coolify Docker Compose quirk
+
+Coolify's **Docker Compose** deployment type does NOT clone the full
+repository to the AX42 — it only fetches the `docker-compose.yml` file.
+That means relative `./` paths in bind-mount volumes don't resolve to
+anything (Docker auto-creates them as empty directories).
+
+**Workaround**: clone this repo manually to `/data/monitoring/config`
+on the AX42. The compose file uses absolute host paths pointing there:
+
+```yaml
+- /data/monitoring/config/telegraf:/etc/telegraf:ro
+- /data/monitoring/config/grafana/provisioning:/etc/grafana/provisioning:ro
+- /data/monitoring/config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+```
+
+Whenever you change a config file (telegraf.conf, dashboards, alert rules,
+etc.), push to GitHub AND run `sudo git pull` in `/data/monitoring/config`
+on the host. Coolify redeploy is only needed if the compose file itself
+changed.
+
 ## One-time host setup (SSH into the AX42)
 
 ### 1. Create persistent data directories
@@ -123,6 +144,24 @@ getent group docker | cut -d: -f3
 ```
 
 Save this value — you'll paste it into the `DOCKER_GID` env var in Coolify.
+
+### 4. Clone this repo to the host
+
+Because Coolify's Docker Compose deploy type only fetches the compose
+file (not the whole repo), bind-mount sources need to exist on the host
+at fixed paths. Clone the repo to `/data/monitoring/config`:
+
+```bash
+sudo git clone https://github.com/Jordi3Dman/ax42-monitor.git /data/monitoring/config
+```
+
+To update configs later:
+
+```bash
+cd /data/monitoring/config
+sudo git pull
+# Then in Coolify → Redeploy the ax42-monitor service
+```
 
 ## Coolify deployment
 
