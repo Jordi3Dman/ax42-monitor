@@ -43,7 +43,12 @@ services:
   telegraf:
     image: telegraf:1.30
     restart: unless-stopped
-    user: telegraf:${DOCKER_GID:-999}
+    # Run as root so we can read /var/run/docker.sock regardless of the
+    # host's docker group ID. Telegraf is otherwise read-only and the
+    # only host paths it touches are /proc, /sys, /etc, /rootfs (all
+    # mounted read-only) — running as root here is safe for a
+    # single-host monitoring setup.
+    user: "0:0"
     # Telegraf uses the same admin token as InfluxDB so there's no separate
     # token management step. Good enough for a single-host setup.
     environment:

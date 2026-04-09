@@ -8,6 +8,10 @@ apiVersion: 1
 
 datasources:
   - name: InfluxDB
+    # Fixed UID so the dashboard's panel queries (which reference
+    # uid: "influxdb") always find this datasource, regardless of the
+    # auto-generated UID Grafana would otherwise assign on first boot.
+    uid: influxdb
     type: influxdb
     access: proxy
     url: http://influxdb:8086
