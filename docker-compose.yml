@@ -1,12 +1,16 @@
 #
-# Server Health Monitoring stack (Telegraf + InfluxDB + Grafana)
+# Server Health Monitoring stack (Telegraf + InfluxDB + Grafana + ntfy)
 # Deployed via Coolify on the AX42 Hetzner server.
 #
-# All three services live on the same Docker network. Telegraf writes host
-# metrics into InfluxDB; Grafana reads from InfluxDB and is exposed publicly
-# at metrics.fournico.com (behind Coolify's Traefik + Let's Encrypt).
+# Services:
+#   - influxdb  → stores metrics (60d TTL)
+#   - telegraf  → scrapes host metrics every 60s, writes to influxdb
+#   - grafana   → renders dashboards + evaluates alert rules
+#                 exposed publicly at metrics.fournico.com
+#   - ntfy      → receives Grafana alert webhooks, pushes to Android
+#                 exposed publicly at ntfy.fournico.com
 #
-# See docs/monitoring-stack.md for the full setup walkthrough.
+# See README.md for the full setup walkthrough.
 #
 
 services:
@@ -105,6 +109,44 @@ services:
     # Coolify attaches its Traefik ingress here — expose port 3000 internally
     expose:
       - "3000"
+
+  ntfy:
+    image: binwiederhier/ntfy:v2.11.0
+    restart: unless-stopped
+    command:
+      - serve
+    environment:
+      # Public base URL — must match the domain Coolify exposes
+      NTFY_BASE_URL: ${NTFY_BASE_URL:-https://ntfy.fournico.com}
+      # ntfy is behind Coolify's Traefik (TLS terminated by Traefik)
+      NTFY_BEHIND_PROXY: "true"
+      NTFY_LISTEN_HTTP: ":80"
+      # Cache messages for 12h so late subscribers can still get them
+      NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
+      NTFY_CACHE_DURATION: "12h"
+      # Attachment storage (disabled — we only use text notifications)
+      NTFY_ATTACHMENT_CACHE_DIR: ""
+      # Auth database — if you later want to require login for publish/subscribe,
+      # set NTFY_AUTH_DEFAULT_ACCESS=deny-all and add users via `ntfy user add`
+      NTFY_AUTH_FILE: /var/lib/ntfy/user.db
+      NTFY_AUTH_DEFAULT_ACCESS: ${NTFY_AUTH_DEFAULT_ACCESS:-read-write}
+      # Disable telemetry
+      NTFY_ENABLE_SIGNUP: "false"
+      NTFY_ENABLE_LOGIN: "true"
+      NTFY_ENABLE_RESERVATIONS: "true"
+    volumes:
+      - /data/monitoring/ntfy/cache:/var/cache/ntfy
+      - /data/monitoring/ntfy/lib:/var/lib/ntfy
+    networks:
+      - monitoring
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost/v1/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
 networks:
   monitoring:

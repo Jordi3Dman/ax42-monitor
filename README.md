@@ -88,9 +88,13 @@ The Stitchflow WMS side (nav item + iframe page) lives separately in the
 sudo mkdir -p /data/monitoring/influxdb
 sudo mkdir -p /data/monitoring/grafana
 sudo mkdir -p /data/monitoring/telegraf
+sudo mkdir -p /data/monitoring/ntfy/cache
+sudo mkdir -p /data/monitoring/ntfy/lib
 
 # Grafana runs as UID 472 inside the container
 sudo chown -R 472:472 /data/monitoring/grafana
+# ntfy runs as UID 1000
+sudo chown -R 1000:1000 /data/monitoring/ntfy
 ```
 
 Coolify restarts shouldn't wipe these, since they live outside any Docker
@@ -147,8 +151,11 @@ GF_SECURITY_ADMIN_PASSWORD=<generate a strong password>
 GF_SERVER_DOMAIN=metrics.fournico.com
 GF_SERVER_ROOT_URL=https://metrics.fournico.com
 
-# ntfy (your self-hosted topic URL)
-NTFY_WEBHOOK_URL=https://alerts.fournico.com/server-alerts
+# ntfy (self-hosted in this stack)
+NTFY_BASE_URL=https://ntfy.fournico.com
+NTFY_AUTH_DEFAULT_ACCESS=read-write
+# Pick an unguessable topic name (not "alerts" or "test"):
+NTFY_WEBHOOK_URL=https://ntfy.fournico.com/ax42-alerts-k7dh9s3f
 
 # From step 3 of host setup
 DOCKER_GID=999
@@ -158,15 +165,27 @@ DOCKER_GID=999
 (during first-boot bootstrap) AND the Telegraf write token. Using a single
 value keeps the stack simple.
 
-### 3. Configure the Grafana domain
+### 3. Configure the service domains
 
 In Coolify, for the `grafana` service:
-- **Domain**: `metrics.fournico.com`
+- **Domain**: `https://metrics.fournico.com`
 - **Port**: `3000`
-- Enable TLS (Coolify handles Let's Encrypt automatically)
 
-Point a DNS A record `metrics.fournico.com` → AX42 IP before starting the
-service so Let's Encrypt can issue the cert.
+For the `ntfy` service:
+- **Domain**: `https://ntfy.fournico.com`
+- **Port**: `80`
+
+Leave `influxdb` and `telegraf` with no domain — they only talk internally.
+
+Enable TLS for both (Coolify handles Let's Encrypt automatically). Point
+DNS A records for **both** `metrics.fournico.com` and `ntfy.fournico.com`
+at the AX42 IP **before** starting the service so Let's Encrypt can issue
+the certs.
+
+**Cloudflare note**: if your domains are proxied by Cloudflare (orange
+cloud ☁️), Let's Encrypt HTTP-01 challenges will fail. Either set both
+subdomains to **DNS only** (grey cloud) OR use a Cloudflare Origin
+Certificate. For admin dashboards the grey-cloud approach is simpler.
 
 ### 4. Start the service
 
@@ -189,8 +208,63 @@ On first boot:
 3. (Optional) Change the admin password on first login
 4. Navigate to **Dashboards → Server Health** → you should see data points
    for CPU, memory, temperature, Docker containers
-5. Navigate to **Alerting → Contact points → ntfy-android → Test** →
-   phone should buzz within 1 second
+
+### 6. Subscribe to ntfy on your Android
+
+1. Install the **ntfy** app from the Play Store (if you don't have it yet)
+2. Open the app → tap **+** → **Subscribe to topic**
+3. Tap **Use another server** and enter: `https://ntfy.fournico.com`
+4. Topic name: use the same unguessable suffix you put in `NTFY_WEBHOOK_URL`
+   (e.g. `ax42-alerts-k7dh9s3f`)
+5. Tap **Subscribe**
+
+The topic will appear in your subscription list. Keep the ntfy app in the
+background — Android will wake it up when messages arrive.
+
+### 7. Test the ntfy alert from Grafana
+
+1. Back in Grafana, navigate to **Alerting → Contact points**
+2. Find `ntfy-android` → click the **Test** button (paper airplane icon)
+3. Your phone should buzz within ~1 second with a notification like:
+   ```
+   [FIRING] AX42 CPU usage high
+   ```
+
+If it doesn't arrive, check:
+- Grafana logs: look for errors POSTing to `NTFY_WEBHOOK_URL`
+- ntfy logs: `docker logs <stack>-ntfy-1` — should show incoming POST
+- Is the ntfy app subscribed to the right topic on the right server?
+
+### (Optional) Lock down ntfy with auth
+
+By default the ntfy server uses `NTFY_AUTH_DEFAULT_ACCESS=read-write`
+which means anyone with a topic URL can publish or subscribe. Since you
+picked an unguessable topic name, this is "security through obscurity"
+but works fine for most cases.
+
+To require login instead:
+```bash
+# Change the env var in Coolify:
+NTFY_AUTH_DEFAULT_ACCESS=deny-all
+
+# SSH into the AX42 and exec into the ntfy container:
+docker exec -it <stack>-ntfy-1 sh
+
+# Create an admin user who can publish AND subscribe
+ntfy user add --role=admin grafana
+# (enter password when prompted)
+
+# Grant that user access to the topic
+ntfy access grafana "ax42-alerts-k7dh9s3f" read-write
+```
+
+Then update the Grafana contact point URL to include basic auth:
+```
+NTFY_WEBHOOK_URL=https://grafana:YOUR_PASSWORD@ntfy.fournico.com/ax42-alerts-k7dh9s3f
+```
+
+And subscribe on Android with the same credentials (ntfy app supports
+per-server basic auth).
 
 ## Wiring the dashboard into Stitchflow
 
